@@ -1,0 +1,399 @@
+from flask import Flask, request, jsonify
+from flask_cors import CORS
+from web3 import Web3
+from web3.exceptions import ContractLogicError
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+from cryptography.hazmat.backends import default_backend
+from base64 import urlsafe_b64encode, urlsafe_b64decode
+from os import urandom
+
+w3 = Web3(Web3.HTTPProvider('https://sepolia.infura.io/v3/cb0ceb6f2a9644bf985ff676416ea4d3'))
+
+contract_abi =[
+			{
+				"inputs": [],
+				"stateMutability": "nonpayable",
+				"type": "constructor"
+			},
+			{
+				"inputs": [],
+				"name": "getAll",
+				"outputs": [
+					{
+						"internalType": "address[]",
+						"name": "",
+						"type": "address[]"
+					},
+					{
+						"components": [
+							{
+								"internalType": "address",
+								"name": "kimlikSahibi",
+								"type": "address"
+							},
+							{
+								"internalType": "string",
+								"name": "ad",
+								"type": "string"
+							},
+							{
+								"internalType": "string",
+								"name": "soyad",
+								"type": "string"
+							},
+							{
+								"internalType": "uint256",
+								"name": "yas",
+								"type": "uint256"
+							},
+							{
+								"internalType": "bool",
+								"name": "kimlikOnaylandi",
+								"type": "bool"
+							}
+						],
+						"internalType": "struct KimlikDogrulama.Kimlik[]",
+						"name": "",
+						"type": "tuple[]"
+					}
+				],
+				"stateMutability": "view",
+				"type": "function"
+			},
+			{
+				"inputs": [],
+				"name": "getOwner",
+				"outputs": [
+					{
+						"internalType": "address",
+						"name": "",
+						"type": "address"
+					}
+				],
+				"stateMutability": "view",
+				"type": "function"
+			},
+			{
+				"inputs": [
+					{
+						"internalType": "address",
+						"name": "kullanici",
+						"type": "address"
+					}
+				],
+				"name": "kimligiDogrula",
+				"outputs": [
+					{
+						"internalType": "bool",
+						"name": "",
+						"type": "bool"
+					}
+				],
+				"stateMutability": "view",
+				"type": "function"
+			},
+			{
+				"inputs": [
+					{
+						"internalType": "address",
+						"name": "kullanici",
+						"type": "address"
+					}
+				],
+				"name": "kimligiOnayla",
+				"outputs": [],
+				"stateMutability": "nonpayable",
+				"type": "function"
+			},
+			{
+				"inputs": [
+					{
+						"internalType": "address",
+						"name": "",
+						"type": "address"
+					}
+				],
+				"name": "kullanicilar",
+				"outputs": [
+					{
+						"internalType": "address",
+						"name": "kimlikSahibi",
+						"type": "address"
+					},
+					{
+						"internalType": "string",
+						"name": "ad",
+						"type": "string"
+					},
+					{
+						"internalType": "string",
+						"name": "soyad",
+						"type": "string"
+					},
+					{
+						"internalType": "uint256",
+						"name": "yas",
+						"type": "uint256"
+					},
+					{
+						"internalType": "bool",
+						"name": "kimlikOnaylandi",
+						"type": "bool"
+					}
+				],
+				"stateMutability": "view",
+				"type": "function"
+			},
+			{
+				"inputs": [],
+				"name": "owner",
+				"outputs": [
+					{
+						"internalType": "address",
+						"name": "",
+						"type": "address"
+					}
+				],
+				"stateMutability": "view",
+				"type": "function"
+			},
+			{
+				"inputs": [
+					{
+						"internalType": "string",
+						"name": "ad",
+						"type": "string"
+					},
+					{
+						"internalType": "string",
+						"name": "soyad",
+						"type": "string"
+					},
+					{
+						"internalType": "uint256",
+						"name": "yas",
+						"type": "uint256"
+					}
+				],
+				"name": "yeniKimlik",
+				"outputs": [],
+				"stateMutability": "nonpayable",
+				"type": "function"
+			}
+		]
+
+contract_address = Web3.to_checksum_address('0x9506484deb61eca87c8607ed48b3db0b3101e939')
+
+contract = w3.eth.contract(address=contract_address, abi=contract_abi)
+
+def encrypt(plain_text, private_key):
+    key = bytes.fromhex(private_key)
+    key = key[:32]  # AES-256 için 32 byte uzunluğunda bir anahtar kullanılır
+    iv = urandom(16)  # Initialization Vector (IV) rastgele oluşturulur
+
+    cipher = Cipher(algorithms.AES(key), modes.CFB(iv), backend=default_backend())
+    encryptor = cipher.encryptor()
+
+    cipher_text = encryptor.update(plain_text.encode()) + encryptor.finalize()
+    return urlsafe_b64encode(iv + cipher_text).decode()
+
+def decrypt(cipher_text, private_key):
+    key = bytes.fromhex(private_key)
+    key = key[:32]
+    data = urlsafe_b64decode(cipher_text.encode())
+
+    iv = data[:16]
+    cipher_text = data[16:]
+
+    cipher = Cipher(algorithms.AES(key), modes.CFB(iv), backend=default_backend())
+    decryptor = cipher.decryptor()
+
+    plain_text = decryptor.update(cipher_text) + decryptor.finalize()
+    return plain_text.decode()
+
+def yeni_kimlik_olustur(ad, soyad, yas, account_address,private_key):
+	nonce = w3.eth.get_transaction_count(account_address)
+	gas_price = w3.eth.gas_price
+	gas_limit = 1000000  # Gas limitini ayarlayın
+
+	try:
+		# İşlemi oluştur
+		transaction = contract.functions.yeniKimlik( ad, soyad, yas).build_transaction({
+			'from': account_address,
+			'gas': gas_limit,
+			'gasPrice': gas_price,
+			'nonce': nonce,
+		})
+
+		# İşlemi imzala
+		signed_transaction = w3.eth.account.sign_transaction(transaction, private_key=private_key)
+		# İşlemi gönder
+		transaction_hash = w3.eth.send_raw_transaction(signed_transaction.rawTransaction)
+		return {"value":transaction_hash.hex(), "error": ""}
+
+	except ContractLogicError as e:
+		# Hata mesajını al
+		error_message = str(e)
+		# Gas sınırları aşıldığında veya başka bir hatayla karşılaşıldığında işlem başarısız olacaktır
+		if "exceeds block gas limit" in error_message:
+			print("Gas limiti aşıldı. Gas limitini artırın.")
+		elif "Kimlik zaten var" in error_message:
+			print("Bu kullanıcı zaten bir kimliğe sahip.")
+			return {"value":"","error":"Bu kullanıcı zaten bir kimliğe sahip."}
+		else:
+			print("Bilinmeyen bir hata oluştu:", error_message)
+
+def get_account(account_address):
+	account_info = contract.functions.kullanicilar(account_address).call({'from': account_address})
+	return account_info
+
+
+# Kimliği doğrula
+def kimlik_dogrula(account_address):
+    result = contract.functions.kimligiDogrula(account_address).call({'from': account_address})
+    return result
+def kimlik_onayla(to_verify_account_address, account_address,private_key):
+	nonce = w3.eth.get_transaction_count(account_address)
+	gas_price = w3.eth.gas_price
+	gas_limit = 1000000  # Gas limitini ayarlayın
+
+	try:
+		# İşlemi oluştur
+		transaction = contract.functions.kimligiOnayla(to_verify_account_address).build_transaction({
+			'from': account_address,
+			'gas': gas_limit,
+			'gasPrice': gas_price,
+			'nonce': nonce,
+		})
+
+		# İşlemi imzala
+		signed_transaction = w3.eth.account.sign_transaction(transaction, private_key=private_key)
+		# İşlemi gönder
+		transaction_hash = w3.eth.send_raw_transaction(signed_transaction.rawTransaction)
+
+		return {"value":transaction_hash.hex(), "error": ""}
+
+	except ContractLogicError as e:
+		# Hata mesajını al
+		error_message = str(e)
+		# Gas sınırları aşıldığında veya başka bir hatayla karşılaşıldığında işlem başarısız olacaktır
+		if "exceeds block gas limit" in error_message:
+			print("Gas limiti aşıldı. Gas limitini artırın.")
+		elif "Sadece kontrat sahibi onaylayabilir" in error_message:
+			print("Sadece kontrat sahibi onaylayabilir")
+			return {"value":"","error":"Sadece kontrat sahibi onaylayabilir"}
+		else:
+			return {"value":"","error":"error_message"}
+			print("Bilinmeyen bir hata oluştu:", error_message)
+
+def get_owner():
+    result = contract.functions.getOwner().call()
+    return result
+
+def get_all(account_address):
+	result = contract.functions.getAll().call({'from': account_address})
+	return result
+
+app = Flask(__name__)
+CORS(app)  # supports_credentials=True ekleyin
+
+
+
+
+@app.route('/api/bbims/get-owner', methods=['GET'])
+def bbims_get_owner():
+	try:
+		contract_owner = get_owner()
+
+		return jsonify({'contract_owner': contract_owner}), 200
+
+	except Exception as e:
+		return jsonify({'error': str(e)}), 500
+
+@app.route('/api/bbims/get-all-identities', methods=['POST'])
+def bbims_get_all_identities():
+	try:
+		json_data = request.get_json()
+		if not json_data:
+			return jsonify({'error': 'Invalid JSON data'}), 400
+
+		account_address = json_data.get('account_address')
+		identities = get_all(account_address)
+		return jsonify({'identities': identities}), 200
+
+	except Exception as e:
+		return jsonify({'error': str(e)}), 500
+
+@app.route('/api/bbims/check-account', methods=['POST'])
+def bbims_check_account():
+	try:
+		json_data = request.get_json()
+		if not json_data:
+			return jsonify({'error': 'Invalid JSON data'}), 400
+
+		account_address = json_data.get('account_address')
+		check_result = kimlik_dogrula(account_address)
+		return jsonify({'account_address': account_address, "check_result":check_result}), 200
+
+	except Exception as e:
+		return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/bbims/approve-account', methods=['POST'])
+def bbims_approve_account():
+	try:
+		json_data = request.get_json()
+		if not json_data:
+			return jsonify({'error': 'Invalid JSON data'}), 400
+
+		to_verify_account_address = json_data.get('to_verify_account_address')
+		account_address = json_data.get('account_address')
+		private_key = json_data.get('private_key')
+		result = kimlik_onayla(to_verify_account_address, account_address,private_key)
+		return jsonify({'account_address': account_address, "result":result}), 200
+
+	except Exception as e:
+		return jsonify({'error': str(e)}), 500
+
+@app.route('/api/bbims/new-account', methods=['POST'])
+def bbims_new_account():
+	try:
+		json_data = request.get_json()
+		if not json_data:
+			return jsonify({'error': 'Invalid JSON data'}), 400
+
+		private_key = json_data.get('private_key')
+		name = encrypt(json_data.get('name'),private_key)
+		surname = encrypt(json_data.get('surname'),private_key)
+		age = json_data.get('age')
+		account_address = json_data.get('account_address')
+
+		result = yeni_kimlik_olustur(name, surname, age, account_address,private_key)
+		return jsonify({'name': name, 'surname': surname, "age": age, "result":result}), 200
+
+	except Exception as e:
+		return jsonify({'error': str(e)}), 500
+
+@app.route('/api/bbims/get-account', methods=['POST'])
+def bbims_get_account():
+	try:
+		json_data = request.get_json()
+		if not json_data:
+			return jsonify({'error': 'Invalid JSON data'}), 400
+
+		account_address = json_data.get('account_address')
+		private_key = json_data.get('private_key')
+
+		result = get_account(account_address)
+		print(result)
+		result[1]=decrypt(result[1],private_key)
+		result[2]=decrypt(result[2],private_key)
+		return jsonify({"result":result}), 200
+
+	except Exception as e:
+		return jsonify({'error': str(e)}), 500
+
+if __name__ == '__main__':
+    app.run(port=8000)
+
+
