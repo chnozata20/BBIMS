@@ -1,0 +1,68 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.18;
+
+contract KimlikDogrulama {
+    
+    // address private adminAddress = 0x87AAA882614a49aD7f0dD919F117CCe9D3813Cf8;
+    address public owner;
+    mapping (address => Kimlik) public kullanicilar;
+    address[] keys;
+
+    constructor() {
+        owner = msg.sender;
+    }
+
+    modifier onlyOwner() {
+        require(msg.sender == owner, "Not the contract owner");
+        _;
+    }
+
+    // Kimlik bilgilerini depolamak için bir struct tanımlayalım
+    struct Kimlik {
+        address kimlikSahibi;
+        string ad;
+        string soyad;
+        uint yas;
+        bool kimlikOnaylandi;
+    }
+
+    // Yeni bir kimlik oluşturmak için bu fonksiyonu kullanabiliriz
+    function yeniKimlik(string memory ad, string memory soyad, uint yas) public {
+        require(kullanicilar[msg.sender].kimlikSahibi == address(0), "Kimlik zaten var");
+        Kimlik memory newKimlik = Kimlik({
+            kimlikSahibi: msg.sender,
+            ad: ad,
+            soyad: soyad,
+            yas: yas,
+            kimlikOnaylandi: false
+        });
+        kullanicilar[msg.sender] = newKimlik;
+        keys.push(msg.sender);
+    }
+
+    // Kimlik doğrulama için bu fonksiyonu kullanabiliriz
+    function kimligiDogrula(address kullanici) public view onlyOwner returns (bool) {
+        return kullanicilar[kullanici].kimlikOnaylandi;
+    }
+
+    // Kimliği onaylamak için sadece kontrat sahibi (owner) çağırabilir
+    function kimligiOnayla(address kullanici) public onlyOwner{
+        kullanicilar[kullanici].kimlikOnaylandi = true;
+    }
+
+        // Kontrat sahibini döndüren basit bir fonksiyon
+    function getOwner() public view returns (address) {
+        return owner;
+    }
+
+    function getAll() public view onlyOwner returns (address[] memory, Kimlik[] memory){
+        address[] memory retAddresses = new address[](keys.length);
+        Kimlik[] memory retKimlikler = new Kimlik[](keys.length);
+        for (uint i = 0; i < keys.length; i++) {
+            retKimlikler[i] = kullanicilar[keys[i]];
+            retAddresses[i] = keys[i];
+        }
+        return (retAddresses, retKimlikler);
+    }
+
+}
